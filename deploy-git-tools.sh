@@ -2,9 +2,11 @@
 
 set -euo pipefail
 
+CLUSTER1=${CLUSTER1:=cluster1}
+
 helm upgrade --install gitea gitea \
   --repo https://dl.gitea.com/charts/ \
-  --version 10.1.4 \
+  --version 10.4.0 \
   --namespace gitea \
   --create-namespace \
   --wait \
@@ -69,7 +71,7 @@ curl -i ${GITEA_HTTP}/api/v1/admin/users \
 
 helm upgrade --install argo-cd argo-cd \
   --repo https://argoproj.github.io/argo-helm \
-  --version 6.9.2 \
+  --version 7.4.7 \
   --namespace argocd \
   --create-namespace \
   --wait \
@@ -89,6 +91,12 @@ configs:
     server.disable.auth: true
   cm:
     timeout.reconciliation: 10s
+  clusterCredentials:
+    ${CLUSTER1}:
+      server: https://kubernetes.default.svc
+      config:
+        tlsClientConfig:
+          insecure: false
 EOF
 
 kubectl -n argocd wait svc argo-cd-argocd-server --for=jsonpath='{.status.loadBalancer.ingress[0].*}' --timeout=300s
@@ -104,7 +112,6 @@ done
 echo"
 
 argocd login ${ARGOCD_HTTP_IP}:3280 --username admin --password ${ARGOCD_ADMIN_SECRET} --plaintext
-argocd cluster set in-cluster --name ${CLUSTER1}
 
 export GITOPS_REPO_LOCAL=$(mktemp -d "${TMPDIR:-/tmp}/gloo-gitops-repo.XXXXXXXXX")
 git -C ${GITOPS_REPO_LOCAL} init -b main
