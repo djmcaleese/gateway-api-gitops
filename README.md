@@ -18,6 +18,16 @@ You will also need the [`argocd` CLI tool](https://argo-cd.readthedocs.io/en/sta
 
 The [deploy-git-tools.sh](/deploy-git-tools.sh) script will deploy Gitea and Argo CD, create a working repo synced with a remote on Gitea, and configure Argo CD to sync that remote repo to the cluster.
 
+### Hostnames
+
+The source repo includes references to specific hostnames that are not likely to be available when you step through this demo yourself:
+
+* All `repoURL` references in Argo CD `Application`s to the remote Git instance
+* Keycloak, as used in the `issuerUrl` for `AuthConfig` resources
+* `httpbin.example.com`, as used in `Gateway` and `HTTPRoute` resources as well as `afterLogoutUrl` and `appUrl` in `AuthConfig` resources
+
+You will need to find a way to stabilise hostnames and modify the commits to reference your own hostnames as part of your preparation, or alternatively update the [fix-hostnames.sh](/fix-hostnames.sh) script and make sure you run it every time you check out the next commit from the source repo.
+
 ## Check out commits from a source repo but actually put the files in a working repo
 
 This repo comes with another Git repo that already has a set of commits that show the GitOps demo – simply unzip [source.tar.gz](/source.tar.gz?raw=1).
@@ -97,6 +107,9 @@ export PS1="❯ "
 If you need to re-tag the source repo for use with these aliases, first delete any existing tags and then run the following to tag all commits on the branch with an incrementing numerical tag (i.e. `1`, `2`, ...)
 
 ```shell
+git tag 1 <commit hash of the starting commit in the demo>
+git tag end <commit hash of the last commit in the demo>
+
 tagname=1
 while read -r rev; do
     ((tagname++))
