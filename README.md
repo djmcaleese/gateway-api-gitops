@@ -11,22 +11,23 @@ You'll need some tools to be able to give this demonstration:
 
 * A Kubernetes cluster that you can access via `kubectl`, `curl`, and your web browser
 * A Git server accessible from both your system and the Kubernetes cluster. In this example I use a [Gitea](https://gitea.com) deployed in the Kubernetes cluster itself
-* A Git-based continuous delivery tool like Argo CD, configured to sync a repo to the Kubernetes cluster
+* A Git-based continuous delivery tool like [Argo CD](https://argoproj.github.io/cd/), configured to sync a repo to the Kubernetes cluster
 * A desktop Git tool that will help make it easier to talk about Git and show off changes and commits ([GitHub Desktop](https://desktop.github.com/download/) is good for this and doesn't require your repo to have anything to do with GitHub)
 
 You will also need the [`argocd` CLI tool](https://argo-cd.readthedocs.io/en/stable/cli_installation/) and, if demonstrating rollouts, the [Argo Rollouts kubectl plugin](https://argo-rollouts.readthedocs.io/en/stable/installation/#kubectl-plugin-installation).
 
-The [deploy-git-tools.sh](/deploy-git-tools.sh) script will deploy Gitea and Argo CD, create a working repo synced with a remote on Gitea, and configure Argo CD to sync that remote repo to the cluster.
+The [deploy-git-tools.sh](/deploy-git-tools.sh) script will deploy Gitea and Argo CD, create a working repo synced with a remote on Gitea, configure Argo CD to sync that remote repo to the cluster, and set up Gitea to call Argo CD's update webhook on each push.
 
 ### Hostnames
 
-The source repo includes references to specific hostnames that are not likely to be available when you step through this demo yourself:
+The source repo includes references to specific hostnames that may not be available when you step through this demo yourself:
 
-* All `repoURL` references in Argo CD `Application`s to the remote Git instance
-* Keycloak, as used in the `issuerUrl` for `AuthConfig` resources
+* All `repoURL` references in Argo CD `Application`s to the remote Git instance, which is `git.example.com` by default
+* Keycloak, as used in the `issuerUrl` for `AuthConfig` resources, which is `keycloak.example.com` by default
 * `httpbin.example.com`, as used in `Gateway` and `HTTPRoute` resources as well as `afterLogoutUrl` and `appUrl` in `AuthConfig` resources
 
-You will need to find a way to stabilise hostnames and modify the commits to reference your own hostnames as part of your preparation, or alternatively update the [fix-hostnames.sh](/fix-hostnames.sh) script and make sure you run it every time you check out the next commit from the source repo.
+Because Argo CD will be syncing changes from the Git repo and the ExtAuth service will be working with Keycloak, you will need to find a way to stabilise hostnames (e.g. edit `/etc/hosts`, or create public cloud load balancers) and modify the commits to reference your own hostnames as part of your preparation.
+Alternatively you can update the [fix-hostnames.sh](/fix-hostnames.sh) script and make sure you run it every time you check out the next commit from the source repo.
 
 ## Check out commits from a source repo but actually put the files in a working repo
 
@@ -108,7 +109,7 @@ If you need to re-tag the source repo for use with these aliases, first delete a
 
 ```shell
 git tag 1 <commit hash of the starting commit in the demo>
-git tag end <commit hash of the last commit in the demo>
+git tag end [<optional, commit hash of the last commit in the demo>]
 
 tagname=1
 while read -r rev; do
