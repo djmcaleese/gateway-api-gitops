@@ -26,20 +26,11 @@ fi
 echo "Setting up working directory in ${WORK_DIR}"
 
 rm -rf ${WORK_DIR}
-mkdir ${WORK_DIR}
-cd ${WORK_DIR}
-git init
-git config commit.gpgsign false
-git config push.autoSetupRemote true
-git commit --allow-empty -m "Initial commit"
 
-if kubectl -n gitea get svc gitea-http >/dev/null 2>&1; then
-  GITEA_HTTP=http://$(kubectl -n gitea get svc gitea-http -o jsonpath='{.status.loadBalancer.ingress[0].*}' 2>/dev/null):3180
-  echo "Adding remote ${GITEA_HTTP} and force pushing"
-  git remote add origin ${GITEA_HTTP}/gloo-gitops/gitops-repo.git
-  git config credential.helper '!f() { sleep 1; echo "username=gloo-gitops"; echo "password=password"; }; f'
-#  git push --force
-fi
+GITEA_HTTP=http://git.example.com:3180
+git clone ${GITEA_HTTP}/gloo-gitops/gitops-repo.git ${WORK_DIR}
+git -C ${WORK_DIR} config commit.gpgsign false
+git -C ${WORK_DIR} config credential.helper '!f() { sleep 1; echo "username=gloo-gitops"; echo "password=password"; }; f'
 
 echo
 echo "Run this command in the tagged repo to target the working directory:"

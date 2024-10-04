@@ -3,10 +3,14 @@
 set -euo pipefail
 
 CLUSTER1=${CLUSTER1:=cluster1}
+GITEA_VERSION=10.4.1
+ARGOCD_VERSION=7.6.7
+
+export GITEA_HTTP=http://git.example.com:3180
 
 helm upgrade --install gitea gitea \
   --repo https://dl.gitea.com/charts/ \
-  --version 10.4.0 \
+  --version ${GITEA_VERSION} \
   --namespace gitea \
   --create-namespace \
   --wait \
@@ -39,11 +43,31 @@ gitea:
     queue:
       TYPE: level
     server:
+      ROOT_URL: ${GITEA_HTTP}
       OFFLINE_MODE: true
+    webhook:
+      ALLOWED_HOST_LIST: private
 EOF
 
-kubectl -n gitea wait svc gitea-http --for=jsonpath='{.status.loadBalancer.ingress[0].*}' --timeout=300s
-export GITEA_HTTP=http://$(kubectl -n gitea get svc gitea-http -o jsonpath='{.status.loadBalancer.ingress[0].*}'):3180
+kubectl -n gitea wait svc gitea-http --for=jsonpath='{.status.loadBalancer.ingress[0].ip}' --timeout=300s
+
+# For webhooks to work, it's crucial that Gitea's ROOT_URL matches the one used in Argo CD application repos.
+# If you're not able to use /etc/hosts where Argo CD is running (e.g. running on a public cloud),
+# update ROOT_URL to the Gitea load balancer IP/name:
+
+# export GITEA_HTTP=http://$(kubectl -n gitea get svc gitea-http -o jsonpath='{.status.loadBalancer.ingress[0].*}'):3180
+# helm upgrade --install gitea gitea \
+#   --repo https://dl.gitea.com/charts/ \
+#   --version ${GITEA_VERSION} \
+#   --namespace gitea \
+#   --reuse-values \
+#   --wait \
+#   -f -<<EOF
+# gitea:
+#   config:
+#     server:
+#       ROOT_URL: ${GITEA_HTTP}
+# EOF
 
 echo -n "Waiting for Gitea load balancer..."
 timeout -v 5m bash -c "until [[ \$(curl -s --fail ${GITEA_HTTP}) ]]; do
@@ -69,9 +93,12 @@ curl -i ${GITEA_HTTP}/api/v1/admin/users \
     "must_change_password": false
   }'
 
+ARGOCD_WEBHOOK_SECRET=$(shuf -ern32 {A..Z} {a..z} {0..9} | paste -sd "\0" -)
+echo "Argo CD webhook secret: ${ARGOCD_WEBHOOK_SECRET}"
+
 helm upgrade --install argo-cd argo-cd \
   --repo https://argoproj.github.io/argo-helm \
-  --version 7.4.7 \
+  --version ${ARGOCD_VERSION} \
   --namespace argocd \
   --create-namespace \
   --wait \
@@ -89,6 +116,8 @@ configs:
   params:
     server.insecure: true
     server.disable.auth: true
+  secret:
+    gogsSecret: ${ARGOCD_WEBHOOK_SECRET}
   cm:
     timeout.reconciliation: 10s
   clusterCredentials:
@@ -99,9 +128,9 @@ configs:
           insecure: false
 EOF
 
-kubectl -n argocd wait svc argo-cd-argocd-server --for=jsonpath='{.status.loadBalancer.ingress[0].*}' --timeout=300s
+kubectl -n argocd wait svc argo-cd-argocd-server --for=jsonpath='{.status.loadBalancer.ingress[0].ip}' --timeout=300s
 
-ARGOCD_HTTP_IP=$(kubectl -n argocd get svc argo-cd-argocd-server -o jsonpath='{.status.loadBalancer.ingress[0].*}')
+ARGOCD_HTTP_IP=$(kubectl -n argocd get svc argo-cd-argocd-server -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 ARGOCD_ADMIN_SECRET=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
 
 echo -n "Waiting for Argo CD load balancer..."
@@ -113,16 +142,17 @@ echo"
 
 argocd login ${ARGOCD_HTTP_IP}:3280 --username admin --password ${ARGOCD_ADMIN_SECRET} --plaintext
 
+unset GIT_WORK_TREE GIT_DIR
+
 export GITOPS_REPO_LOCAL=$(mktemp -d "${TMPDIR:-/tmp}/gloo-gitops-repo.XXXXXXXXX")
 git -C ${GITOPS_REPO_LOCAL} init -b main
 git -C ${GITOPS_REPO_LOCAL} config commit.gpgsign false
 git -C ${GITOPS_REPO_LOCAL} config push.autoSetupRemote true
 git -C ${GITOPS_REPO_LOCAL} config credential.helper '!f() { sleep 1; echo "username=gloo-gitops"; echo "password=password"; }; f'
 git -C ${GITOPS_REPO_LOCAL} remote add origin ${GITEA_HTTP}/gloo-gitops/gitops-repo.git
-git -C ${GITOPS_REPO_LOCAL} commit --allow-empty -m "Initial commit"
-git -C ${GITOPS_REPO_LOCAL} push
 
-kubectl -n argocd apply -f - <<EOF
+mkdir -p ${GITOPS_REPO_LOCAL}/platform/apps
+cat <<EOF > ${GITOPS_REPO_LOCAL}/platform/apps/aoa.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
@@ -163,6 +193,29 @@ spec:
     syncOptions:
     - ApplyOutOfSyncOnly=true
 EOF
+
+git -C ${GITOPS_REPO_LOCAL} add .
+git -C ${GITOPS_REPO_LOCAL} commit -m "App-of-apps"
+git -C ${GITOPS_REPO_LOCAL} push
+
+kubectl -n argocd apply -f ${GITOPS_REPO_LOCAL}/platform/apps/aoa.yaml
+
+curl -i ${GITEA_HTTP}/api/v1/repos/gloo-gitops/gitops-repo/hooks \
+  -H "accept: application/json" -H "Content-Type: application/json" \
+  -H "Authorization: token ${GITEA_ADMIN_TOKEN}" \
+  -d '{
+    "active": true,
+    "type": "gitea",
+    "branch_filter": "*",
+    "config": {
+      "content_type": "json",
+      "url": "'http://${ARGOCD_HTTP_IP}:3280/api/webhook'",
+      "secret": "'${ARGOCD_WEBHOOK_SECRET}'"
+    },
+    "events": [
+      "push"
+    ]
+  }'
 
 rm -rf ${GITOPS_REPO_LOCAL}
 
